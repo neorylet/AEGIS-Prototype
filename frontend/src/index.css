@@ -4,184 +4,165 @@
 @tailwind components;
 @tailwind utilities;
 
+/* =========================================================
+   LIGHT THEME (Default) — Crisp, Calm, Executive Slate
+   ========================================================= */
 :root {
-  /* Softer dark background – less pure black, more blue‑grey */
-  --bg: #11181c;
-  --surface: #1a2126;
-  --surface-raised: #222b32;
-  --border: #2e3a42;
-  --border-subtle: #1f2a32;
-  --accent: #4fc3f7;
-  --accent-dim: rgba(79, 195, 247, 0.15);
-  --text-primary: #e8edf2;
-  --text-secondary: #9aa8b5;
-  --text-muted: #6a7a8a;
+  --bg-app: #f8fafc;            /* Slate 50: clean, soft canvas */
+  --bg-surface: #ffffff;        /* Pure white cards */
+  --bg-surface-hover: #f1f5f9;  /* Slate 100 */
+  --bg-subtle: #f8fafc;
+  --bg-muted: #e2e8f0;
 
-  /* Softer severity colors */
-  --critical: #f0626a;
-  --warning: #f5b342;
-  --success: #4caf8f;
-  --info: #64b5f6;
+  --border: #e2e8f0;            /* Slate 200: subtle, crisp borders */
+  --border-subtle: #f1f5f9;
+  
+  --sidebar-bg: #ffffff;
+  --sidebar-border: #e2e8f0;
+  --sidebar-text: #475569;
+  --sidebar-text-active: #0284c7;
+  --sidebar-item-active: #f0f9ff;
+  --sidebar-item-hover: #f8fafc;
+
+  --header-bg: #ffffff;
+  --header-border: #e2e8f0;
+
+  --text-primary: #0f172a;      /* Slate 900: high-contrast headings & numbers */
+  --text-secondary: #334155;    /* Slate 700: readable body text */
+  --text-muted: #64748b;        /* Slate 500: helper & metadata */
+  --text-faint: #94a3b8;        /* Slate 400 */
+
+  --accent: #0284c7;            /* Sky 600 */
+  --accent-hover: #0369a1;
+  --accent-subtle: #e0f2fe;
+
+  --critical: #ef4444;
+  --critical-subtle: #fef2f2;
+  --critical-border: #fecaca;
+  --critical-text: #991b1b;
+
+  --warning: #f59e0b;
+  --warning-subtle: #fffbeb;
+  --warning-border: #fde68a;
+  --warning-text: #92400e;
+
+  --success: #10b981;
+  --success-subtle: #ecfdf5;
+  --success-border: #a7f3d0;
+  --success-text: #065f46;
+
+  --info: #0284c7;
+  --info-subtle: #f0f9ff;
+  --info-border: #bae6fd;
+  --info-text: #075985;
+}
+
+/* =========================================================
+   DARK THEME — Deep Blue-Grey Slate (Not pitch muddy black)
+   ========================================================= */
+.dark, [data-theme="dark"] {
+  --bg-app: #090e13;            /* Rich deep navy canvas */
+  --bg-surface: #101720;        /* Sleek card surface */
+  --bg-surface-hover: #16202c;  
+  --bg-subtle: #141c26;
+  --bg-muted: #1e2938;
+
+  --border: #1e2b38;            /* Low-glare slate border */
+  --border-subtle: #16222e;
+
+  --sidebar-bg: #0c1218;
+  --sidebar-border: #1a2532;
+  --sidebar-text: #94a3b8;
+  --sidebar-text-active: #38bdf8;
+  --sidebar-item-active: rgba(56, 189, 248, 0.12);
+  --sidebar-item-hover: #141c26;
+
+  --header-bg: #0c1218;
+  --header-border: #1a2532;
+
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #8493a5;
+  --text-faint: #526377;
+
+  --accent: #38bdf8;
+  --accent-hover: #7dd3fc;
+  --accent-subtle: rgba(56, 189, 248, 0.15);
+
+  --critical: #f87171;
+  --critical-subtle: rgba(239, 68, 68, 0.15);
+  --critical-border: rgba(239, 68, 68, 0.35);
+  --critical-text: #fca5a5;
+
+  --warning: #fbbf24;
+  --warning-subtle: rgba(245, 158, 11, 0.15);
+  --warning-border: rgba(245, 158, 11, 0.35);
+  --warning-text: #fcd34d;
+
+  --success: #34d399;
+  --success-subtle: rgba(16, 185, 129, 0.15);
+  --success-border: rgba(16, 185, 129, 0.35);
+  --success-text: #6ee7b7;
+
+  --info: #38bdf8;
+  --info-subtle: rgba(56, 189, 248, 0.15);
+  --info-border: rgba(56, 189, 248, 0.35);
+  --info-text: #7dd3fc;
 }
 
 * {
   box-sizing: border-box;
 }
 
-html,
-body,
-#root {
+html, body, #root {
   height: 100%;
 }
 
 body {
   margin: 0;
-  background-color: var(--bg);
+  background-color: var(--bg-app);
   color: var(--text-primary);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
-code,
-.font-mono,
-.mono {
-  font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
+code, .font-mono {
+  font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, monospace;
 }
 
-/* Smooth, quiet scrollbars */
+/* Polished Scrollbars */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
-
 ::-webkit-scrollbar-track {
-  background: var(--bg);
+  background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
   background: var(--border);
-  border-radius: 6px;
+  border-radius: 9999px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: #4a5a6a;
+  background: var(--text-muted);
 }
 
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* Enterprise card styling – subtle shadow, clean border */
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  transition: box-shadow 0.15s ease, border-color 0.15s ease;
-}
-
-.card:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
-  border-color: var(--border);
-}
-
-/* Stat card specific */
-.stat-card {
-  @apply card p-5;
-}
-
-/* Buttons – softer, more refined */
-.btn-primary {
-  background: var(--accent);
-  color: #0a0e10;
-  font-weight: 500;
-  padding: 0.5rem 1.25rem;
-  border-radius: 6px;
-  border: none;
-  transition: background 0.15s, box-shadow 0.15s;
-  box-shadow: 0 1px 4px rgba(79, 195, 247, 0.2);
-}
-
-.btn-primary:hover {
-  background: #6bd4ff;
-  box-shadow: 0 2px 8px rgba(79, 195, 247, 0.3);
-}
-
-.btn-secondary {
-  background: transparent;
-  color: var(--text-secondary);
+/* Card utilities using CSS variables */
+.aegis-card {
+  background-color: var(--bg-surface);
   border: 1px solid var(--border);
-  padding: 0.5rem 1.25rem;
-  border-radius: 6px;
-  transition: background 0.15s, color 0.15s;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.02);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.btn-secondary:hover {
-  background: var(--surface-raised);
-  color: var(--text-primary);
+.aegis-card-hover:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -2px rgba(0, 0, 0, 0.03);
 }
 
-/* Severity badges – softer, more readable */
-.badge-critical {
-  background: var(--critical);
-  color: #11181c;
-}
-.badge-warning {
-  background: var(--warning);
-  color: #11181c;
-}
-.badge-success {
-  background: var(--success);
-  color: #11181c;
-}
-.badge-info {
-  background: var(--info);
-  color: #11181c;
-}
-.badge-low {
-  background: #3a4a5a;
-  color: #c8d6e0;
-}
-
-/* Tables – cleaner */
-.table-row {
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.table-row:hover {
-  background: var(--surface-raised);
-}
-
-/* Headers */
-h1, h2, h3, h4 {
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-
-/* Utility */
-.text-muted {
-  color: var(--text-muted);
-}
-.text-secondary {
-  color: var(--text-secondary);
-}
-
-/* Responsive tweaks */
-@media (max-width: 768px) {
-  .card {
-    padding: 1rem;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
+.dark .aegis-card-hover:hover {
+  border-color: #2d3e50;
+  box-shadow: 0 4px 12px 0 rgba(0, 0, 0, 0.25);
 }

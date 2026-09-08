@@ -19,7 +19,7 @@ pub struct AppState {
 }
 
 #[tauri::command]
-pub async fn start_monitoring(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn start_monitoring(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     if state.is_monitoring.swap(true, Ordering::SeqCst) {
         log::warn!("start_monitoring called while already running — ignoring");
         return Ok(());
@@ -27,13 +27,15 @@ pub async fn start_monitoring(state: State<'_, AppState>) -> Result<(), String> 
     log::info!("🚀 Starting AEGIS monitoring pipeline...");
 
     let db = state.db.clone();
+    let app_clone = app.clone();
     spawn(async move {
-        poll_processes(db.clone()).await;
+        poll_processes(db, app_clone).await;
     });
 
     let db2 = state.db.clone();
+    let app_clone2 = app.clone();
     spawn(async move {
-        poll_connections(db2).await;
+        poll_connections(db2, app_clone2).await;
     });
 
     let db3 = state.db.clone();

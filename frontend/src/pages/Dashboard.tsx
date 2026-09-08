@@ -1,59 +1,81 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Play, Square, RefreshCw, Filter, Download, AlertTriangle, Cpu, Activity, Radio } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
+import {
+  Play,
+  Square,
+  RefreshCw,
+  Download,
+  AlertTriangle,
+  Cpu,
+  Activity,
+  Radio,
+  Search,
+  CheckCircle2,
+  Clock,
+  ShieldCheck,
+  Globe,
+  Layers,
+  ArrowUpRight,
+} from 'lucide-react';
 import { commands } from '../services/tauri';
 import {
   EnrichedEvent,
   EventStatus,
-  StatCard,
   AssetAnomaly,
   AnomalySeverity,
   EventCounts,
   HourlyEvents,
 } from '../types';
 
-const severityColor = (s: AnomalySeverity): string => {
+/* =========================================================================
+   SOLID HIGH-CONTRAST SEVERITY BADGES
+   ========================================================================= */
+const severityBadgeClass = (s: AnomalySeverity): string => {
   switch (s) {
-    case 'Critical': return 'bg-[#f85149] text-white border border-[#f85149]';
-    case 'High':     return 'bg-[#d29922] text-[#0a0e10] border border-[#d29922]';
-    case 'Medium':   return 'bg-[#d29922]/80 text-[#0a0e10] border border-[#d29922]/80';
-    case 'Low':      return 'bg-[#2a2f35] text-[#e6edf0] border border-[#3a4149]';
-    default:         return 'bg-[#2a2f35] text-[#e6edf0] border border-[#3a4149]';
+    case 'Critical':
+      return 'bg-rose-600 text-white shadow-xs font-semibold';
+    case 'High':
+      return 'bg-amber-600 text-white shadow-xs font-semibold';
+    case 'Medium':
+      return 'bg-orange-600 text-white shadow-xs font-semibold';
+    case 'Low':
+    default:
+      return 'bg-slate-800 text-white dark:bg-slate-700 dark:text-slate-100 font-medium';
   }
 };
 
-const severityBadgeColor = (s: AnomalySeverity): string => {
-  switch (s) {
-    case 'Critical': return 'text-[#f85149] bg-[#f85149]/10';
-    case 'High':     return 'text-[#d29922] bg-[#d29922]/10';
-    case 'Medium':   return 'text-[#d29922] bg-[#d29922]/10';
-    case 'Low':      return 'text-[#e6edf0] bg-[#8b949e]/10';
-    default:         return 'text-[#3fb950] bg-[#3fb950]/10';
+const getEventStatusBadge = (status: EventStatus): string => {
+  switch (status) {
+    case 'Critical':
+      return 'bg-rose-600 text-white font-semibold';
+    case 'Warning':
+    case 'Anomaly':
+      return 'bg-amber-600 text-white font-semibold';
+    case 'Network':
+      return 'bg-slate-800 text-sky-300 dark:bg-slate-700 dark:text-sky-300 font-medium';
+    case 'Resolved':
+      return 'bg-emerald-600 text-white font-semibold';
+    case 'Info':
+    default:
+      return 'bg-slate-800 text-white dark:bg-slate-700 dark:text-slate-100 font-medium';
   }
-};
-
-const assetTypeIcon = (t: string) => {
-  if (t === 'Process') return <Cpu className="w-4 h-4" />;
-  if (t === 'NetworkEndpoint') return <Radio className="w-4 h-4" />;
-  return <Activity className="w-4 h-4" />;
 };
 
 const formatAssetLabel = (a: AssetAnomaly): string => {
-  if (a.asset_type === 'Process') return `${a.display_name} (process)`;
-  if (a.asset_type === 'NetworkEndpoint') return a.display_name;
+  if (a.asset_type === 'Process') return `${a.display_name} (Process)`;
   return a.display_name;
 };
 
-// Turns a raw source identifier like "process_poller" into "Process Poller".
 const formatSourceLabel = (source: string): string =>
   source
     .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 
 export const Dashboard = () => {
   const [isMonitoring, setIsMonitoring] = useState<boolean>(false);
+  const [listenerActive, setListenerActive] = useState<boolean>(false);
   const [rawEvents, setRawEvents] = useState<EnrichedEvent[]>([]);
-  const [filteredEvents, setFilteredEvents] = useState<EnrichedEvent[]>([]);
   const [anomalies, setAnomalies] = useState<AssetAnomaly[]>([]);
   const [eventCounts, setEventCounts] = useState<EventCounts | null>(null);
   const [hourlyEvents, setHourlyEvents] = useState<HourlyEvents[]>([]);
@@ -65,30 +87,35 @@ export const Dashboard = () => {
   const [monitoringStartedAt, setMonitoringStartedAt] = useState<Date | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
 
-  const isLoopback = (event: EnrichedEvent): boolean => {
+  // Filters & State
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [hideLoopback, setHideLoopback] = useState<boolean>(true);
+  const [selectedType, setSelectedType] = useState<'all' | 'process' | 'network'>('all');
+  const [hoveredBarIndex, setHoveredBarIndex] = useState<number | null>(null);
+
+  const isLoopback = useCallback((event: EnrichedEvent): boolean => {
     if ('Network' in event.event) {
       const data = event.event.Network;
-      const local = data.local_ip;
-      const remote = data.remote_ip;
+      const { local_ip, remote_ip } = data;
       return (
-        local.startsWith('127.') ||
-        remote.startsWith('127.') ||
-        local === '0.0.0.0' ||
-        remote === '0.0.0.0' ||
-        local === '[::]' ||
-        remote === '[::]' ||
-        local === '::1' ||
-        remote === '::1'
+        local_ip.startsWith('127.') ||
+        remote_ip.startsWith('127.') ||
+        local_ip === '0.0.0.0' ||
+        remote_ip === '0.0.0.0' ||
+        local_ip === '[::]' ||
+        remote_ip === '[::]' ||
+        local_ip === '::1' ||
+        remote_ip === '::1'
       );
     }
     return false;
-  };
+  }, []);
 
   const loadEvents = async (): Promise<void> => {
+    console.log('[DEBUG] loadEvents called');
     try {
       const events = await commands.getRecentEvents(100);
       setRawEvents(events);
-      setFilteredEvents(events.filter(e => !isLoopback(e)));
     } catch (error) {
       console.error('Failed to load events:', error);
     }
@@ -118,8 +145,6 @@ export const Dashboard = () => {
     }
   };
 
-  // Anomalies + stats together form one "analysis pass" — this is what
-  // powers the real Last Analysis timestamp in Quick Status.
   const runAnalysisCycle = useCallback(async () => {
     await Promise.all([loadAnomalies(), loadStats()]);
     setLastAnalysisAt(new Date());
@@ -172,20 +197,97 @@ export const Dashboard = () => {
     }
   };
 
+  /* =========================================================================
+     COMPLETED EVENT LISTENER EFFECT WITH DEBUG LOGGING
+     ========================================================================= */
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | undefined;
+    let isMounted = true;
+    let unlistenBatch: (() => void) | null = null;
+    let unlistenSingle: (() => void) | null = null;
     let intervalStats: ReturnType<typeof setInterval> | undefined;
+
+    const mergeNewEvents = (incoming: EnrichedEvent[]) => {
+      if (!incoming || incoming.length === 0) return;
+
+      setRawEvents((prev) => {
+        const seen = new Set<string | number>();
+        const result: EnrichedEvent[] = [];
+
+        for (const ev of incoming) {
+          if (ev && ev.id != null && !seen.has(ev.id)) {
+            seen.add(ev.id);
+            result.push(ev);
+          }
+        }
+
+        for (const ev of prev) {
+          if (ev && ev.id != null && !seen.has(ev.id)) {
+            seen.add(ev.id);
+            result.push(ev);
+          }
+        }
+
+        return result.slice(0, 100);
+      });
+    };
+
     if (isMonitoring) {
-      interval = setInterval(loadEvents, 3000);
-      intervalStats = setInterval(runAnalysisCycle, 10000);
+      console.log('[DEBUG] Setting up listener...');
+
+      // 1. Listen for Batched Events ('new-events-batch')
+      listen<EnrichedEvent[]>('new-events-batch', (event) => {
+        if (!isMounted) return;
+        console.log('[DEBUG] new-events-batch received:', event.payload);
+        const batch = event.payload;
+        if (Array.isArray(batch) && batch.length > 0) {
+          mergeNewEvents([...batch].reverse());
+        }
+      })
+        .then((unsub) => {
+          if (!isMounted) {
+            unsub();
+          } else {
+            unlistenBatch = unsub;
+            console.log('[DEBUG] new-events-batch listener attached');
+            setListenerActive(true);
+          }
+        })
+        .catch((err) => console.error('Failed to attach new-events-batch listener:', err));
+
+      // 2. Listen for Single Events ('new-event')
+      listen<EnrichedEvent>('new-event', (event) => {
+        if (!isMounted) return;
+        console.log('[DEBUG] new-event received:', event.payload);
+        if (event.payload) {
+          mergeNewEvents([event.payload]);
+        }
+      })
+        .then((unsub) => {
+          if (!isMounted) {
+            unsub();
+          } else {
+            unlistenSingle = unsub;
+            console.log('[DEBUG] Listener attached');
+            setListenerActive(true);
+          }
+        })
+        .catch((err) => console.error('Failed to attach new-event listener:', err));
+
+      // Periodic analysis polling
+      intervalStats = setInterval(runAnalysisCycle, 2000);
     }
+
     return () => {
-      if (interval) clearInterval(interval);
+      isMounted = false;
+      console.log('[DEBUG] Listener cleaned up');
+      setListenerActive(false);
+      if (unlistenBatch) unlistenBatch();
+      if (unlistenSingle) unlistenSingle();
       if (intervalStats) clearInterval(intervalStats);
     };
   }, [isMonitoring, runAnalysisCycle]);
 
-  // Live "Running for: 2m 34s" ticker, separate from the data-refresh intervals above.
+  // Live timer for elapsed monitoring duration
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | undefined;
     if (isMonitoring && monitoringStartedAt) {
@@ -202,106 +304,137 @@ export const Dashboard = () => {
     handleRefreshAll();
   }, [handleRefreshAll]);
 
-  const computedStats = useMemo<StatCard[]>(() => {
-    const processCount = eventCounts?.process_events
-      ?? rawEvents.filter(e => 'Process' in e.event).length;
-    const networkCount = eventCounts?.network_events
-      ?? rawEvents.filter(e => 'Network' in e.event).length;
-    const total = eventCounts?.total_events ?? rawEvents.length;
+  const filteredEvents = useMemo(() => {
+    return rawEvents.filter((e) => {
+      if (hideLoopback && isLoopback(e)) return false;
+      if (selectedType === 'process' && !('Process' in e.event)) return false;
+      if (selectedType === 'network' && !('Network' in e.event)) return false;
 
-    const lastHourTotal = eventCounts?.last_hour?.total ?? 0;
-    const prevBaseline = Math.max(lastHourTotal * 2, 1);
-    const trendPct = Math.round(Math.min(99, (lastHourTotal / prevBaseline) * 100));
-    const trend: 'up' | 'down' | 'neutral' =
-      lastHourTotal > prevBaseline * 1.05 ? 'up'
-      : lastHourTotal < prevBaseline * 0.95 ? 'down'
-      : 'neutral';
+      if (!searchQuery.trim()) return true;
 
-    return [
-      {
-        label: 'Active Assets',
-        value: assetCount > 0 ? assetCount : 0,
-        trend: assetCount > 0 ? 'up' : 'neutral',
-        trendValue: assetCount > 0 ? undefined : undefined,
-      },
-      {
-        label: 'Total Events',
-        value: Number(total) || 0,
-        trend,
-        trendValue: trend !== 'neutral' ? trendPct : undefined,
-      },
-      {
-        label: 'Process Events',
-        value: Number(processCount) || 0,
-        trend: 'neutral',
-      },
-      {
-        label: 'Network Events',
-        value: Number(networkCount) || 0,
-        trend: 'neutral',
-      },
-    ];
-  }, [assetCount, eventCounts, rawEvents]);
+      const q = searchQuery.toLowerCase();
+      const sourceMatches = e.source.toLowerCase().includes(q);
 
-  const threatLevel = useMemo<{ label: string; color: string }>(() => {
-    if (anomalies.some(a => a.max_severity === 'Critical')) return { label: 'Critical', color: 'text-[#f85149]' };
-    if (anomalies.some(a => a.max_severity === 'High')) return { label: 'High', color: 'text-[#d29922]' };
-    if (anomalies.some(a => a.max_severity === 'Medium')) return { label: 'Medium', color: 'text-[#d29922]' };
-    if (anomalies.some(a => a.max_severity === 'Low')) return { label: 'Low', color: 'text-[#58a6ff]' };
-    return { label: 'Low', color: 'text-[#58a6ff]' };
+      if ('Process' in e.event) {
+        const p = e.event.Process;
+        return sourceMatches || p.name.toLowerCase().includes(q) || String(p.pid).includes(q);
+      }
+      if ('Network' in e.event) {
+        const n = e.event.Network;
+        return (
+          sourceMatches ||
+          n.protocol.toLowerCase().includes(q) ||
+          n.local_ip.includes(q) ||
+          n.remote_ip.includes(q) ||
+          String(n.local_port).includes(q) ||
+          String(n.remote_port).includes(q)
+        );
+      }
+      return sourceMatches;
+    });
+  }, [rawEvents, hideLoopback, selectedType, searchQuery, isLoopback]);
+
+  const threatLevel = useMemo(() => {
+    if (anomalies.some((a) => a.max_severity === 'Critical')) {
+      return {
+        label: 'Critical',
+        badgeClass: 'bg-rose-600 text-white font-semibold',
+      };
+    }
+    if (anomalies.some((a) => a.max_severity === 'High')) {
+      return {
+        label: 'High',
+        badgeClass: 'bg-amber-600 text-white font-semibold',
+      };
+    }
+    if (anomalies.some((a) => a.max_severity === 'Medium')) {
+      return {
+        label: 'Medium',
+        badgeClass: 'bg-orange-600 text-white font-semibold',
+      };
+    }
+    return {
+      label: 'Low',
+      badgeClass: 'bg-slate-800 text-white font-medium',
+    };
   }, [anomalies]);
 
-  const getStatusColor = (status: EventStatus): string => {
-    switch (status) {
-      case 'Critical': return 'bg-[#f85149]/15 text-[#f85149] border border-[#f85149]/30';
-      case 'Warning':  return 'bg-[#d29922]/15 text-[#d29922] border border-[#d29922]/30';
-      case 'Info':     return 'bg-[#58a6ff]/15 text-[#58a6ff] border border-[#58a6ff]/30';
-      case 'Resolved': return 'bg-[#3fb950]/15 text-[#3fb950] border border-[#3fb950]/30';
-      case 'Network':  return 'bg-[#00d4ff]/15 text-[#00d4ff] border border-[#00d4ff]/30';
-      case 'Anomaly':  return 'bg-[#d29922]/15 text-[#d29922] border border-[#d29922]/30';
-      default:         return 'bg-[#2a2f35] text-[#8b949e] border border-[#3a4149]';
+  const formatTimestamp = (ts: string): string => {
+    try {
+      const d = new Date(ts);
+      return d.toLocaleTimeString([], { hour12: false });
+    } catch {
+      return ts;
     }
   };
 
-  // Already returns the friendly label ("Process" / "Network"), not the raw
-  // "process_poller" / "connection_poller" source string — that raw string
-  // is what shows in the Source column, now humanized via formatSourceLabel.
-  const getEventType = (event: EnrichedEvent): string => {
-    if ('Process' in event.event) return 'Process';
-    if ('Network' in event.event) return 'Network';
-    return 'Unknown';
+  const formatClockTime = (d: Date): string => d.toLocaleTimeString([], { hour12: false });
+
+  const formatDuration = (totalSeconds: number): string => {
+    const m = Math.floor(totalSeconds / 60);
+    const s = totalSeconds % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
   };
 
-  const getEventStatus = (event: EnrichedEvent): EventStatus => {
-    if ('Process' in event.event) return 'Info';
-    if ('Network' in event.event) return 'Network' as EventStatus;
-    return 'Info';
+  const handleExportEvents = () => {
+    if (filteredEvents.length === 0) return;
+    const blob = new Blob([JSON.stringify(filteredEvents, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aegis-events-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const renderEventDetails = (event: EnrichedEvent): string => {
-    if ('Process' in event.event) {
-      const data = event.event.Process;
-      return `PID: ${data.pid} | ${data.name} | CPU: ${data.cpu_usage.toFixed(1)}% | Mem: ${(data.memory_usage / 1024 / 1024).toFixed(1)}MB`;
-    }
-    if ('Network' in event.event) {
-      const data = event.event.Network;
-      return `${data.protocol} | ${data.local_ip}:${data.local_port} → ${data.remote_ip}:${data.remote_port}`;
-    }
-    return 'N/A';
-  };
+  const processCount = eventCounts?.process_events ?? rawEvents.filter((e) => 'Process' in e.event).length;
+  const networkCount = eventCounts?.network_events ?? rawEvents.filter((e) => 'Network' in e.event).length;
+  const totalEventsCount = eventCounts?.total_events ?? rawEvents.length;
 
-  const renderTrendArrow = (trend: 'up' | 'down' | 'neutral', value?: number): JSX.Element => {
-    if (trend === 'neutral') return <span className="text-[#5c6570]">—</span>;
-    const color = trend === 'up' ? 'text-[#3fb950]' : 'text-[#f85149]';
-    const arrow = trend === 'up' ? '↑' : '↓';
-    return <span className={`${color} text-xs font-mono`}>{arrow} {value ? value + '%' : ''}</span>;
-  };
+  const kpis = [
+    {
+      label: 'Active Assets',
+      value: assetCount > 0 ? assetCount.toLocaleString() : '0',
+      subtext: 'Monitored local endpoints',
+      icon: Layers,
+      iconColor: 'text-sky-600 dark:text-sky-400',
+      trendPill: null,
+    },
+    {
+      label: 'Total Events',
+      value: Number(totalEventsCount).toLocaleString(),
+      subtext: 'Ingested telemetry events',
+      icon: Activity,
+      iconColor: 'text-indigo-600 dark:text-indigo-400',
+      trendPill: (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-800 text-emerald-400 dark:bg-slate-700">
+          <ArrowUpRight className="w-3 h-3" />
+          Active
+        </span>
+      ),
+    },
+    {
+      label: 'Process Events',
+      value: Number(processCount).toLocaleString(),
+      subtext: 'Binaries & background daemons',
+      icon: Cpu,
+      iconColor: 'text-amber-600 dark:text-amber-400',
+      trendPill: null,
+    },
+    {
+      label: 'Network Events',
+      value: Number(networkCount).toLocaleString(),
+      subtext: 'Sockets & connection flows',
+      icon: Globe,
+      iconColor: 'text-emerald-600 dark:text-emerald-400',
+      trendPill: null,
+    },
+  ];
 
   const renderChart = (): JSX.Element => {
     const now = new Date();
-
-    // Clock-hour label for each of the 24 bins, oldest→newest — e.g. "14:00".
-    // Used for the x-axis ticks and the per-bar tooltip.
     const hourLabels: string[] = [];
     for (let i = 23; i >= 0; i--) {
       const d = new Date(now);
@@ -325,13 +458,12 @@ export const Dashboard = () => {
         const hh = String(d.getHours()).padStart(2, '0');
         bucketKeys.push(`${y}-${mo}-${da} ${hh}:00:00`);
       }
-      data = bucketKeys.map(k => Number(map.get(k) ?? 0));
+      data = bucketKeys.map((k) => Number(map.get(k) ?? 0));
     } else {
       data = hourLabels.map(() => 0);
     }
 
     const maxData = Math.max(1, ...data);
-    const midValue = Math.round(maxData / 2);
     const totalEvents = data.reduce((sum, v) => sum + v, 0);
     const avgPerHour = totalEvents / 24;
     const peakIndex = data.reduce((best, v, i) => (v > data[best] ? i : best), 0);
@@ -339,67 +471,93 @@ export const Dashboard = () => {
 
     return (
       <div>
-        {/* Summary row — the numbers that make the chart actually useful at a glance */}
-        <div className="flex items-center gap-5 mb-3 text-xs font-mono">
-          <span>
-            <span className="text-[#5c6570]">Peak </span>
-            <span className="text-[#e6edf0] font-semibold">{maxData}</span>
-            {hasPeak && <span className="text-[#5c6570]"> @ {hourLabels[peakIndex]}</span>}
-          </span>
-          <span>
-            <span className="text-[#5c6570]">Total </span>
-            <span className="text-[#e6edf0] font-semibold">{totalEvents}</span>
-          </span>
-          <span>
-            <span className="text-[#5c6570]">Avg/hr </span>
-            <span className="text-[#e6edf0] font-semibold">{avgPerHour.toFixed(1)}</span>
-          </span>
+        <div className="flex flex-wrap items-center gap-6 mb-4 text-xs">
+          <div className="flex items-center gap-1.5">
+            <span style={{ color: 'var(--text-muted)' }}>24h Peak:</span>
+            <span className="font-semibold font-mono" style={{ color: 'var(--text-primary)' }}>
+              {maxData.toLocaleString()}
+            </span>
+            {hasPeak && (
+              <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                (@ {hourLabels[peakIndex]})
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span style={{ color: 'var(--text-muted)' }}>24h Volume:</span>
+            <span className="font-semibold font-mono" style={{ color: 'var(--text-primary)' }}>
+              {totalEvents.toLocaleString()}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span style={{ color: 'var(--text-muted)' }}>Avg/hour:</span>
+            <span className="font-semibold font-mono" style={{ color: 'var(--text-primary)' }}>
+              {avgPerHour.toFixed(1)}
+            </span>
+          </div>
         </div>
 
-        <div className="flex gap-2">
-          {/* Y-axis scale */}
-          <div className="flex flex-col justify-between h-44 text-[10px] text-[#5c6570] font-mono text-right w-6 shrink-0">
+        <div className="flex gap-3">
+          <div
+            style={{ color: 'var(--text-muted)' }}
+            className="flex flex-col justify-between h-40 text-[10px] font-mono text-right w-7 shrink-0 select-none pb-1"
+          >
             <span>{maxData}</span>
-            <span>{midValue}</span>
+            <span>{Math.round(maxData / 2)}</span>
             <span>0</span>
           </div>
 
-          {/* Plot area: gridlines behind, bars on top */}
-          <div className="relative flex-1 h-44">
+          <div className="relative flex-1 h-40">
             <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
-              <div className="border-t border-[#2a2f35]" />
-              <div className="border-t border-[#1e2327]" />
-              <div className="border-t border-[#2a2f35]" />
+              <div className="border-t border-slate-200/90 dark:border-slate-800" />
+              <div className="border-t border-dashed border-slate-200/70 dark:border-slate-800/80" />
+              <div className="border-t border-slate-200/90 dark:border-slate-800" />
             </div>
-            <div className="absolute inset-0 flex items-end gap-1">
+
+            <div className="absolute inset-0 flex items-end gap-1 px-1">
               {data.map((value, index) => {
                 const isPeak = hasPeak && index === peakIndex;
+                const isHovered = hoveredBarIndex === index;
+                const heightPct = Math.max(value > 0 ? 6 : 2, (value / maxData) * 100);
+
                 return (
                   <div
                     key={index}
-                    title={`${hourLabels[index]} — ${value} event${value === 1 ? '' : 's'}`}
-                    className={`flex-1 rounded-sm transition-colors ${
-                      isPeak ? 'bg-[#5ce1ff] hover:bg-[#8aeaff]' : 'bg-[#00d4ff] hover:bg-[#5ce1ff]'
-                    }`}
-                    style={{
-                      height: `${(value / maxData) * 100}%`,
-                      opacity: isPeak ? 1 : 0.4 + (index / 24) * 0.5,
-                      minHeight: value > 0 ? '3px' : '0',
-                    }}
-                  />
+                    onMouseEnter={() => setHoveredBarIndex(index)}
+                    onMouseLeave={() => setHoveredBarIndex(null)}
+                    className="relative flex-1 h-full flex items-end cursor-pointer"
+                  >
+                    <div
+                      className={`w-full rounded-t-sm transition-all duration-150 ${
+                        isPeak
+                          ? 'bg-sky-500 dark:bg-sky-400'
+                          : isHovered
+                          ? 'bg-sky-400 dark:bg-sky-300'
+                          : 'bg-slate-200 hover:bg-slate-300 dark:bg-slate-700/80 dark:hover:bg-slate-600'
+                      }`}
+                      style={{ height: `${heightPct}%` }}
+                    />
+
+                    {isHovered && (
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20 pointer-events-none whitespace-nowrap px-2.5 py-1 bg-slate-900 text-white dark:bg-slate-800 text-[11px] font-mono rounded shadow-lg border border-slate-700">
+                        <div className="font-semibold">{hourLabels[index]}</div>
+                        <div className="text-sky-300">{value.toLocaleString()} events</div>
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
           </div>
         </div>
 
-        {/* X-axis — hour label every 4th bar, aligned under the plot area */}
-        <div className="flex mt-1.5 pl-8">
+        <div
+          style={{ color: 'var(--text-muted)' }}
+          className="flex mt-2 pl-10 text-[10px] font-mono select-none"
+        >
           {hourLabels.map((label, index) => (
             <div key={index} className="flex-1 text-center">
-              {index % 4 === 0 && (
-                <span className="text-[10px] text-[#5c6570] font-mono">{label}</span>
-              )}
+              {index % 4 === 0 ? label : ''}
             </div>
           ))}
         </div>
@@ -407,177 +565,334 @@ export const Dashboard = () => {
     );
   };
 
-  // Short, readable time only — e.g. "07:48:23" — used for both event
-  // timestamps and anomaly detection times. Full ISO strings are for the
-  // detail pages, not this summary view.
-  const formatTimestamp = (ts: string): string => {
-    try {
-      const d = new Date(ts);
-      return d.toLocaleTimeString([], { hour12: false });
-    } catch {
-      return ts;
-    }
-  };
-
-  const formatClockTime = (d: Date): string => d.toLocaleTimeString([], { hour12: false });
-
-  const formatDuration = (totalSeconds: number): string => {
-    const m = Math.floor(totalSeconds / 60);
-    const s = totalSeconds % 60;
-    return m > 0 ? `${m}m ${s}s` : `${s}s`;
-  };
-
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6">
+      {/* Top Action Toolbar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <button
             onClick={handleToggleMonitoring}
             disabled={controlsDisabled}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed ${
+            className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all flex items-center gap-2 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed ${
               isMonitoring
-                ? 'bg-[#f85149] text-[#0a0e10] hover:bg-[#ff6a61]'
-                : 'bg-[#00d4ff] text-[#0a0e10] hover:bg-[#5ce1ff]'
+                ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/20'
+                : 'bg-sky-600 hover:bg-sky-700 text-white shadow-sky-600/20'
             }`}
           >
-            {isMonitoring ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-            {isMonitoring ? 'Stop Monitoring' : 'Start Monitoring'}
+            {isMonitoring ? (
+              <Square className="w-3.5 h-3.5 fill-current" />
+            ) : (
+              <Play className="w-3.5 h-3.5 fill-current" />
+            )}
+            <span>{isMonitoring ? 'Stop Monitoring' : 'Start Monitoring'}</span>
           </button>
+
           <button
             onClick={handleRefreshAll}
             disabled={loading}
-            className="px-4 py-2 rounded-md text-sm font-medium border border-[#2a2f35] bg-[#14181a] text-[#8b949e] hover:text-[#e6edf0] hover:border-[#3a4149] transition-colors flex items-center gap-2"
+            style={{
+              borderColor: 'var(--border)',
+              backgroundColor: 'var(--bg-surface)',
+              color: 'var(--text-secondary)',
+            }}
+            className="px-3.5 py-2 rounded-lg text-xs font-medium border hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center gap-2"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            {loading ? 'Loading...' : 'Refresh'}
+            <RefreshCw
+              className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-sky-600' : 'text-slate-400'}`}
+            />
+            <span>{loading ? 'Refreshing...' : 'Refresh'}</span>
           </button>
+
+          <div className="h-4 w-px bg-slate-300 dark:bg-slate-700 mx-1 hidden sm:block" />
+
+          <label
+            style={{ color: 'var(--text-secondary)' }}
+            className="flex items-center gap-2 text-xs font-medium cursor-pointer select-none hover:text-slate-900 dark:hover:text-white transition-colors"
+          >
+            <input
+              type="checkbox"
+              checked={hideLoopback}
+              onChange={(e) => setHideLoopback(e.target.checked)}
+              className="rounded border-slate-300 dark:border-slate-700 text-sky-600 focus:ring-sky-500"
+            />
+            <span>Hide Loopback</span>
+          </label>
         </div>
-        <div className="flex items-center gap-3">
+
+        <div className="flex items-center gap-4">
           {isMonitoring && (
-            <span className="text-xs text-[#5c6570] font-mono">
-              Running for: {formatDuration(elapsedSeconds)}
-            </span>
+            <div
+              style={{
+                backgroundColor: 'var(--bg-surface)',
+                borderColor: 'var(--border)',
+                color: 'var(--text-secondary)',
+              }}
+              className="flex items-center gap-1.5 text-xs font-mono border px-3 py-1.5 rounded-lg shadow-2xs"
+            >
+              <Clock className="w-3.5 h-3.5 text-slate-400" />
+              <span>Uptime: {formatDuration(elapsedSeconds)}</span>
+            </div>
           )}
+
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${isMonitoring ? 'bg-[#3fb950] animate-pulse' : 'bg-[#5c6570]'}`} />
-            <span className="text-sm text-[#8b949e]">{isMonitoring ? 'Monitoring' : 'Stopped'}</span>
+            <span className="relative flex h-2.5 w-2.5">
+              {isMonitoring && (
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              )}
+              <span
+                className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                  isMonitoring ? 'bg-emerald-500' : 'bg-slate-400'
+                }`}
+              />
+            </span>
+            <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+              {isMonitoring ? 'Collector Active' : 'Collector Idle'}
+            </span>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-3">
-        {computedStats.map((card, index) => (
-          <div key={index} className="bg-[#14181a] border border-[#2a2f35] rounded-lg p-4">
-            <div className="flex justify-between items-start mb-2">
-              <span className="text-sm text-[#8b949e]">{card.label}</span>
-              {renderTrendArrow(card.trend, card.trendValue)}
+      {/* 4 KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {kpis.map((kpi, idx) => {
+          const Icon = kpi.icon;
+          return (
+            <div
+              key={idx}
+              className="aegis-card aegis-card-hover p-5 flex flex-col justify-between"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-semibold tracking-wider uppercase" style={{ color: 'var(--text-muted)' }}>
+                  {kpi.label}
+                </span>
+                <span className="p-1.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                  <Icon className={`w-4 h-4 ${kpi.iconColor}`} />
+                </span>
+              </div>
+
+              <div className="flex items-baseline justify-between mb-2">
+                <span
+                  style={{ color: 'var(--text-primary)' }}
+                  className="text-3xl font-bold font-mono tracking-tight tabular-nums"
+                >
+                  {initialLoad && loading ? '—' : kpi.value}
+                </span>
+                {kpi.trendPill}
+              </div>
+
+              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                {kpi.subtext}
+              </div>
             </div>
-            <p className="text-3xl font-semibold text-[#e6edf0] font-mono tabular-nums">
-              {initialLoad && loading ? '—' : card.value}
-            </p>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <div className="col-span-2 bg-[#14181a] border border-[#2a2f35] rounded-lg p-4">
+      {/* Center Grid: Activity Chart + System Health */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="lg:col-span-2 aegis-card p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-[#e6edf0]">Events Over Last 24 Hours</h3>
+            <div>
+              <h3 className="text-sm font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                Telemetry Volume (Last 24 Hours)
+              </h3>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                Aggregated system calls and connection traffic
+              </p>
+            </div>
             {hourlyEvents.length === 0 && (
-              <span className="text-xs text-[#5c6570]">(no historical data yet — starts populating after ~1h)</span>
+              <span className="text-xs font-mono italic" style={{ color: 'var(--text-muted)' }}>
+                (Bins populate hourly)
+              </span>
             )}
           </div>
           {renderChart()}
         </div>
-        <div className="bg-[#14181a] border border-[#2a2f35] rounded-lg p-4">
-          <h3 className="text-sm font-semibold text-[#e6edf0] mb-4">Quick Status</h3>
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-[#8b949e]">System Health</span>
-              <span className="text-sm font-medium text-[#3fb950]">Normal</span>
+
+        <div className="aegis-card p-6 flex flex-col justify-between">
+          <div>
+            <h3 className="text-sm font-semibold tracking-tight mb-1" style={{ color: 'var(--text-primary)' }}>
+              System Health & Posture
+            </h3>
+            <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+              Real-time analysis baseline status
+            </p>
+
+            <div
+              style={{ borderColor: 'var(--border)' }}
+              className="space-y-3.5 divide-y divide-slate-100 dark:divide-slate-800 text-xs"
+            >
+              <div className="flex justify-between items-center pt-2">
+                <span className="flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
+                  <ShieldCheck className="w-4 h-4 text-slate-400" />
+                  Agent Engine
+                </span>
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Operational
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center pt-3.5">
+                <span className="flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
+                  <AlertTriangle className="w-4 h-4 text-slate-400" />
+                  Threat Level
+                </span>
+                <span className={`px-2.5 py-0.5 rounded text-[11px] ${threatLevel.badgeClass}`}>
+                  {threatLevel.label}
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center pt-3.5">
+                <span style={{ color: 'var(--text-secondary)' }}>Data Retention</span>
+                <span className="font-medium font-mono" style={{ color: 'var(--text-primary)' }}>
+                  30 Days (SQLite WAL)
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center pt-3.5">
+                <span style={{ color: 'var(--text-secondary)' }}>Last Analysis Cycle</span>
+                <span className="font-mono" style={{ color: 'var(--text-primary)' }}>
+                  {isMonitoring && lastAnalysisAt ? formatClockTime(lastAnalysisAt) : 'Pending'}
+                </span>
+              </div>
             </div>
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-[#8b949e]">Threat Level</span>
-              <span className={`text-sm font-semibold ${threatLevel.color}`}>
-                {threatLevel.label}
-              </span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-[#8b949e]">Data Retention</span>
-              <span className="text-sm font-medium text-[#e6edf0]">30 days</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-[#8b949e]">Last Analysis</span>
-              <span className="text-sm font-medium text-[#5c6570] font-mono">
-                {isMonitoring && lastAnalysisAt ? formatClockTime(lastAnalysisAt) : '—'}
-              </span>
-            </div>
+          </div>
+
+          <div
+            style={{
+              backgroundColor: 'var(--bg-app)',
+              borderColor: 'var(--border)',
+              color: 'var(--text-muted)',
+            }}
+            className="mt-6 p-3 rounded-lg border text-[11px] leading-relaxed"
+          >
+            <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+              Z-Score Engine:{' '}
+            </span>
+            Calculates dynamic statistical standard deviations against running asset baselines.
           </div>
         </div>
       </div>
 
-      {/* Anomalies Panel */}
-      <div className="bg-[#14181a] border border-[#2a2f35] rounded-lg">
-        <div className="p-4 border-b border-[#2a2f35] flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className={`w-4 h-4 ${anomalies.length > 0 ? 'text-[#d29922]' : 'text-[#5c6570]'}`} />
-            <h3 className="text-sm font-semibold text-[#e6edf0]">Behavioral Anomalies</h3>
+      {/* Behavioral Anomalies */}
+      <div className="aegis-card overflow-hidden">
+        <div
+          style={{
+            borderBottomColor: 'var(--border)',
+            backgroundColor: 'var(--bg-subtle)',
+          }}
+          className="p-4 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 rounded-md bg-slate-800 text-amber-400">
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                Behavioral Anomalies
+              </h3>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                Statistical deviations flagged from dynamic baselines
+              </p>
+            </div>
             {anomalies.length > 0 && (
-              <span className={`px-2 py-0.5 text-xs font-medium rounded-md ${severityBadgeColor(anomalies[0].max_severity)}`}>
-                {anomalies.length} detected
+              <span className="ml-2 px-2.5 py-0.5 text-xs font-semibold rounded bg-rose-600 text-white shadow-xs">
+                {anomalies.length} Flagged
               </span>
             )}
           </div>
-          <div className="text-xs text-[#5c6570] font-mono">
-            z-score based · requires 3+ baseline samples
-          </div>
+          <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+            min. 3 sample windows required
+          </span>
         </div>
+
         {anomalies.length === 0 ? (
-          <div className="p-8 text-center">
-            <div className="mx-auto mb-2 w-8 h-8 rounded-full bg-[#3fb950]/10 flex items-center justify-center">
-              <Activity className="w-4 h-4 text-[#3fb950]" />
+          <div className="p-10 text-center">
+            <div className="mx-auto mb-3 w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 flex items-center justify-center border border-emerald-200 dark:border-emerald-800">
+              <CheckCircle2 className="w-5 h-5" />
             </div>
-            <div className="text-sm font-medium text-[#e6edf0] mb-1">No anomalies detected</div>
-            <div className="text-xs text-[#5c6570] max-w-md mx-auto">
-              Start monitoring and let AEGIS collect 3+ analysis windows (~45–60 seconds).
-              Baselines are loaded from the database across restarts.
-            </div>
+            <h4 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+              No active anomalies detected
+            </h4>
+            <p className="text-xs max-w-md mx-auto" style={{ color: 'var(--text-muted)' }}>
+              System operations are within expected baseline variance.
+            </p>
           </div>
         ) : (
-          <div className="max-h-80 overflow-y-auto divide-y divide-[#2a2f35]">
+          <div
+            style={{ borderColor: 'var(--border)' }}
+            className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800"
+          >
             {anomalies.map((a) => {
-              const top = [...a.deviations].sort((x, y) => Math.abs(y.z_score) - Math.abs(x.z_score))[0];
+              const top = [...a.deviations].sort(
+                (x, y) => Math.abs(y.z_score) - Math.abs(x.z_score)
+              )[0];
+
               return (
-                <div key={a.asset_id} className="p-4 hover:bg-[#181d1f] transition-colors">
+                <div
+                  key={a.asset_id}
+                  className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+                >
                   <div className="flex items-start justify-between gap-4 mb-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="w-8 h-8 rounded-md flex items-center justify-center text-[#8b949e] bg-[#0a0e10] border border-[#2a2f35]">
-                        {assetTypeIcon(a.asset_type)}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span
+                        style={{
+                          backgroundColor: 'var(--bg-app)',
+                          borderColor: 'var(--border)',
+                          color: 'var(--text-secondary)',
+                        }}
+                        className="w-9 h-9 rounded-lg flex items-center justify-center border shrink-0"
+                      >
+                        {a.asset_type === 'Process' ? (
+                          <Cpu className="w-4 h-4" />
+                        ) : (
+                          <Radio className="w-4 h-4" />
+                        )}
                       </span>
                       <div className="min-w-0">
-                        <div className="text-sm font-medium text-[#e6edf0] truncate">
+                        <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                           {formatAssetLabel(a)}
                         </div>
-                        <div className="text-xs text-[#5c6570] font-mono truncate">
-                          detected {formatTimestamp(a.detected_at)} · {a.event_count} events
+                        <div className="text-xs font-mono truncate" style={{ color: 'var(--text-muted)' }}>
+                          {formatTimestamp(a.detected_at)} · {a.event_count} events recorded
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
+
+                    <div className="flex items-center gap-3 shrink-0">
                       <div className="text-right">
-                        <div className="text-xs text-[#5c6570]">Score</div>
-                        <div className="text-lg font-semibold text-[#e6edf0] font-mono tabular-nums">
+                        <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>
+                          Score
+                        </div>
+                        <div className="text-base font-bold font-mono" style={{ color: 'var(--text-primary)' }}>
                           {a.overall_score.toFixed(1)}
                         </div>
                       </div>
-                      <span className={`px-2 py-1 rounded-md text-xs font-semibold whitespace-nowrap ${severityColor(a.max_severity)}`}>
+
+                      <span className={`px-2.5 py-1 rounded text-xs ${severityBadgeClass(a.max_severity)}`}>
                         {a.max_severity}
                       </span>
                     </div>
                   </div>
+
                   {top && (
-                    <div className="ml-10 text-xs font-mono text-[#5c6570]">
-                      Top deviation: <span className="text-[#e6edf0] font-medium">{top.feature_name}</span> = {top.current_value.toFixed(1)}
+                    <div className="ml-12 flex items-center gap-2 text-xs font-mono" style={{ color: 'var(--text-secondary)' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>Top deviation:</span>
+                      <span
+                        style={{
+                          backgroundColor: 'var(--bg-app)',
+                          borderColor: 'var(--border)',
+                          color: 'var(--text-primary)',
+                        }}
+                        className="px-1.5 py-0.5 rounded border font-medium"
+                      >
+                        {top.feature_name}
+                      </span>
+                      <span>= {top.current_value.toFixed(1)}</span>
+                      <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                        (z={top.z_score.toFixed(2)})
+                      </span>
                     </div>
                   )}
                 </div>
@@ -588,44 +903,182 @@ export const Dashboard = () => {
       </div>
 
       {/* Recent Events Table */}
-      <div className="bg-[#14181a] border border-[#2a2f35] rounded-lg">
-        <div className="p-4 border-b border-[#2a2f35] flex justify-between items-center">
-          <h3 className="text-sm font-semibold text-[#e6edf0]">Recent Events</h3>
-          <div className="flex gap-2">
-            <button className="px-3 py-1.5 rounded-md text-sm border border-[#2a2f35] bg-[#0a0e10] text-[#8b949e] hover:text-[#e6edf0] hover:border-[#3a4149] flex items-center gap-2 transition-colors">
-              <Filter className="w-4 h-4" />
-              Filter
-            </button>
-            <button className="px-3 py-1.5 rounded-md text-sm border border-[#2a2f35] bg-[#0a0e10] text-[#8b949e] hover:text-[#e6edf0] hover:border-[#3a4149] flex items-center gap-2 transition-colors">
-              <Download className="w-4 h-4" />
-              Export
+      <div className="aegis-card overflow-hidden">
+        <div
+          style={{
+            borderBottomColor: 'var(--border)',
+            backgroundColor: 'var(--bg-subtle)',
+          }}
+          className="p-4 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              Recent Events
+            </h3>
+            <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+              ({filteredEvents.length} displayed)
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search PID, IP, binary..."
+                style={{
+                  backgroundColor: 'var(--bg-surface)',
+                  borderColor: 'var(--border)',
+                  color: 'var(--text-primary)',
+                }}
+                className="pl-8 pr-3 py-1.5 text-xs rounded-lg border placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-sky-500 w-48 sm:w-56"
+              />
+            </div>
+
+            <div
+              style={{
+                backgroundColor: 'var(--bg-surface)',
+                borderColor: 'var(--border)',
+              }}
+              className="flex rounded-lg border p-0.5 text-xs"
+            >
+              {(['all', 'process', 'network'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setSelectedType(t)}
+                  style={{
+                    backgroundColor: selectedType === t ? 'var(--bg-surface-hover)' : 'transparent',
+                    color: selectedType === t ? 'var(--text-primary)' : 'var(--text-muted)',
+                  }}
+                  className={`px-2.5 py-1 rounded-md capitalize font-medium transition-colors ${
+                    selectedType === t ? 'font-semibold shadow-2xs' : 'hover:text-slate-800 dark:hover:text-white'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={handleExportEvents}
+              disabled={filteredEvents.length === 0}
+              style={{
+                backgroundColor: 'var(--bg-surface)',
+                borderColor: 'var(--border)',
+                color: 'var(--text-secondary)',
+              }}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium border hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export</span>
             </button>
           </div>
         </div>
+
         {filteredEvents.length === 0 ? (
-          <div className="p-8 text-center text-[#5c6570]">No events yet (loopback filtered)</div>
+          <div className="p-10 text-center text-xs" style={{ color: 'var(--text-muted)' }}>
+            No events match your current filter criteria.
+          </div>
         ) : (
-          <div className="max-h-80 overflow-y-auto overflow-x-auto">
-            <table className="w-full">
-              <thead className="sticky top-0 bg-[#14181a]">
-                <tr className="border-b border-[#2a2f35]">
-                  <th className="text-left px-4 py-3 text-xs font-medium text-[#5c6570] uppercase tracking-wider font-mono">Timestamp</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-[#5c6570] uppercase tracking-wider">Source</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-[#5c6570] uppercase tracking-wider">Type</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-[#5c6570] uppercase tracking-wider">Details</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-[#5c6570] uppercase tracking-wider">Status</th>
+          <div className="max-h-96 overflow-y-auto overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead
+                style={{
+                  backgroundColor: 'var(--bg-subtle)',
+                  borderColor: 'var(--border)',
+                  color: 'var(--text-muted)',
+                }}
+                className="sticky top-0 border-b text-[11px] font-semibold uppercase tracking-wider select-none z-10"
+              >
+                <tr>
+                  <th className="px-4 py-3">Time</th>
+                  <th className="px-4 py-3">Source</th>
+                  <th className="px-4 py-3">Type</th>
+                  <th className="px-4 py-3">Telemetry Payload</th>
+                  <th className="px-4 py-3">Status</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody
+                style={{ borderColor: 'var(--border)' }}
+                className="divide-y divide-slate-100 dark:divide-slate-800 text-xs"
+              >
                 {filteredEvents.map((event) => (
-                  <tr key={event.id} className="border-b border-[#1e2327] hover:bg-[#181d1f] transition-colors">
-                    <td className="px-4 py-3 text-sm text-[#8b949e] font-mono whitespace-nowrap">{formatTimestamp(event.timestamp)}</td>
-                    <td className="px-4 py-3 text-sm text-[#e6edf0]">{formatSourceLabel(event.source)}</td>
-                    <td className="px-4 py-3 text-sm text-[#8b949e]">{getEventType(event)}</td>
-                    <td className="px-4 py-3 text-sm text-[#8b949e] font-mono">{renderEventDetails(event)}</td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-1 rounded-md text-xs font-medium ${getStatusColor(getEventStatus(event))}`}>
-                        {getEventStatus(event)}
+                  <tr
+                    key={event.id}
+                    className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                  >
+                    <td
+                      style={{ color: 'var(--text-muted)' }}
+                      className="px-4 py-3 font-mono whitespace-nowrap"
+                    >
+                      {formatTimestamp(event.timestamp)}
+                    </td>
+                    <td
+                      style={{ color: 'var(--text-primary)' }}
+                      className="px-4 py-3 font-medium whitespace-nowrap"
+                    >
+                      {formatSourceLabel(event.source)}
+                    </td>
+                    <td
+                      style={{ color: 'var(--text-secondary)' }}
+                      className="px-4 py-3 whitespace-nowrap"
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        {'Process' in event.event ? (
+                          <Cpu className="w-3.5 h-3.5 text-slate-400" />
+                        ) : (
+                          <Radio className="w-3.5 h-3.5 text-slate-400" />
+                        )}
+                        {'Process' in event.event ? 'Process' : 'Network'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 max-w-md">
+                      {'Process' in event.event ? (
+                        <div className="flex items-center gap-2 font-mono text-xs truncate" style={{ color: 'var(--text-secondary)' }}>
+                          <span
+                            style={{
+                              backgroundColor: 'var(--bg-app)',
+                              borderColor: 'var(--border)',
+                              color: 'var(--text-primary)',
+                            }}
+                            className="border px-1.5 py-0.5 rounded text-[11px] font-semibold"
+                          >
+                            PID {event.event.Process.pid}
+                          </span>
+                          <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            {event.event.Process.name}
+                          </span>
+                          <span className="text-slate-400">·</span>
+                          <span>CPU: {event.event.Process.cpu_usage.toFixed(1)}%</span>
+                          <span className="text-slate-400">·</span>
+                          <span>
+                            Mem: {(event.event.Process.memory_usage / 1024 / 1024).toFixed(1)}MB
+                          </span>
+                        </div>
+                      ) : 'Network' in event.event ? (
+                        <div className="flex items-center gap-2 font-mono text-xs truncate" style={{ color: 'var(--text-secondary)' }}>
+                          <span className="bg-slate-800 text-sky-300 px-1.5 py-0.5 rounded text-[10px] uppercase font-bold">
+                            {event.event.Network.protocol}
+                          </span>
+                          <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
+                            {event.event.Network.local_ip}:{event.event.Network.local_port}
+                          </span>
+                          <span className="text-slate-400">→</span>
+                          <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
+                            {event.event.Network.remote_ip}:{event.event.Network.remote_port}
+                          </span>
+                        </div>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>N/A</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`px-2.5 py-1 rounded text-[11px] ${getEventStatusBadge(
+                        'Process' in event.event ? 'Info' : 'Network'
+                      )}`}>
+                        {'Process' in event.event ? 'Process' : 'Network'}
                       </span>
                     </td>
                   </tr>
