@@ -1,10 +1,11 @@
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions, SqliteConnectOptions};
 use sqlx::Row;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, Duration};
 use serde_json;
 use crate::events::{EnrichedEvent, SecurityEvent};
 use crate::fingerprint::{Baseline, BaselineStats};
 use crate::discovery::Asset;
+use crate::risk::{AssetAnomaly, FeatureDeviation};
 use anyhow::Result;
 use log::info;
 use std::collections::HashMap;
@@ -100,6 +101,33 @@ impl DatabaseManager {
             Ok(_) => info!("✅ baselines table ready"),
             Err(e) => {
                 log::error!("❌ baselines CREATE TABLE FAILED: {:?}", e);
+                return Err(e);
+            }
+        }
+
+        match sqlx::query(
+            "CREATE TABLE IF NOT EXISTS anomalies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id TEXT NOT NULL,
+                asset_type TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                max_severity TEXT NOT NULL,
+                overall_score REAL NOT NULL,
+                deviations_json TEXT NOT NULL,
+                detected_at TEXT NOT NULL,
+                status TEXT DEFAULT 'Open',
+                acknowledged_at TEXT,
+                resolved_at TEXT,
+                cooldown_until TEXT
+            )",
+        )
+        .execute(pool)
+        .await
+        {
+            Ok(_) => info!("✅ anomalies table ready"),
+            Err(e) => {
+                log::error!("❌ anomalies CREATE TABLE FAILED: {:?}", e);
                 return Err(e);
             }
         }
@@ -399,6 +427,194 @@ impl DatabaseManager {
     pub async fn health_check(&self) -> Result<(), String> {
         Ok(())
     }
+
+    // Anomaly management methods
+    pub async fn insert_anomaly(&self, anomaly: &AssetAnomaly) -> Result<i64, anyhow::Error> {
+        let deviations_json = serde_json::to_string(&anomaly.deviations)?;
+        
+        let result = sqlx::query(
+            "INSERT INTO anomalies (asset_id, asset_type, display_name, severity, max_severity, overall_score, deviations_json, detected_at, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        )
+        .bind(&anomaly.asset_id)
+        .bind(anomaly.asset_type.to_string())
+        .bind(&anomaly.display_name)
+        .bind(anomaly.max_severity.to_string())
+        .bind(anomaly.max_severity.to_string())
+        .bind(anomaly.overall_score)
+        .bind(&deviations_json)
+        .bind(anomaly.detected_at.to_rfc3339())
+        .bind("Open")
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    pub async fn get_anomalies(
+        &self,
+        limit: usize,
+        offset: usize,
+        severity_filter: Option<String>,
+        status_filter: Option<String>,
+    ) -> Result<Vec<AnomalyRecord>, anyhow::Error> {
+        let mut query = "SELECT id, asset_id, asset_type, display_name, severity, max_severity, overall_score, deviations_json, detected_at, status, acknowledged_at, resolved_at, cooldown_until
+                        FROM anomalies".to_string();
+        let mut conditions = Vec::new();
+        
+        if let Some(severity) = &severity_filter {
+            conditions.push(format!("max_severity = '{}'", severity));
+        }
+        if let Some(status) = &status_filter {
+            conditions.push(format!("status = '{}'", status));
+        }
+        
+        if !conditions.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&conditions.join(" AND "));
+        }
+        
+        query.push_str(" ORDER BY detected_at DESC LIMIT ?1 OFFSET ?2");
+        
+        let rows = sqlx::query(&query)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            let id: i64 = row.get(0);
+            let asset_id: String = row.get(1);
+            let asset_type: String = row.get(2);
+            let display_name: String = row.get(3);
+            let _severity: String = row.get(4);
+            let max_severity: String = row.get(5);
+            let overall_score: f64 = row.get(6);
+            let deviations_json: String = row.get(7);
+            let detected_at_str: String = row.get(8);
+            let status: String = row.get(9);
+            let acknowledged_at: Option<String> = row.get(10);
+            let resolved_at: Option<String> = row.get(11);
+            let _cooldown_until: Option<String> = row.get(12);
+
+            let detected_at = DateTime::parse_from_rfc3339(&detected_at_str)
+                .unwrap()
+                .with_timezone(&Utc);
+            
+            let deviations: Vec<FeatureDeviation> = serde_json::from_str(&deviations_json)?;
+
+            results.push(AnomalyRecord {
+                id,
+                asset_id,
+                asset_type,
+                display_name,
+                severity: max_severity.clone(),
+                max_severity,
+                overall_score,
+                deviations,
+                detected_at,
+                status: status.parse().unwrap_or(AlertStatus::Open),
+                acknowledged_at,
+                resolved_at,
+            });
+        }
+
+        Ok(results)
+    }
+
+    pub async fn acknowledge_anomaly(&self, id: i64) -> Result<(), anyhow::Error> {
+        sqlx::query("UPDATE anomalies SET status = 'Acknowledged', acknowledged_at = ?1 WHERE id = ?2")
+            .bind(Utc::now().to_rfc3339())
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn resolve_anomaly(&self, id: i64) -> Result<(), anyhow::Error> {
+        sqlx::query("UPDATE anomalies SET status = 'Resolved', resolved_at = ?1 WHERE id = ?2")
+            .bind(Utc::now().to_rfc3339())
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn count_open_anomalies(&self) -> Result<i64, anyhow::Error> {
+        let row = sqlx::query("SELECT COUNT(*) FROM anomalies WHERE status = 'Open'")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get(0))
+    }
+
+    pub async fn get_anomaly_details(&self, id: i64) -> Result<AnomalyRecord, anyhow::Error> {
+        let row = sqlx::query(
+            "SELECT id, asset_id, asset_type, display_name, severity, max_severity, overall_score, deviations_json, detected_at, status, acknowledged_at, resolved_at, cooldown_until
+             FROM anomalies WHERE id = ?1",
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let anomaly_id: i64 = row.get(0);
+        let asset_id: String = row.get(1);
+        let asset_type: String = row.get(2);
+        let display_name: String = row.get(3);
+        let _severity: String = row.get(4);
+        let max_severity: String = row.get(5);
+        let overall_score: f64 = row.get(6);
+        let deviations_json: String = row.get(7);
+        let detected_at_str: String = row.get(8);
+        let status: String = row.get(9);
+        let acknowledged_at: Option<String> = row.get(10);
+        let resolved_at: Option<String> = row.get(11);
+        let _cooldown_until: Option<String> = row.get(12);
+
+        let detected_at = DateTime::parse_from_rfc3339(&detected_at_str)
+            .unwrap()
+            .with_timezone(&Utc);
+        
+        let deviations: Vec<FeatureDeviation> = serde_json::from_str(&deviations_json)?;
+
+        Ok(AnomalyRecord {
+            id: anomaly_id,
+            asset_id,
+            asset_type,
+            display_name,
+            severity: max_severity.clone(),
+            max_severity,
+            overall_score,
+            deviations,
+            detected_at,
+            status: status.parse().unwrap_or(AlertStatus::Open),
+            acknowledged_at,
+            resolved_at,
+        })
+    }
+
+    pub async fn check_cooldown(&self, asset_id: &str, feature_name: &str, severity: &str) -> bool {
+        let five_minutes_ago = Utc::now() - Duration::minutes(5);
+        
+        let result = sqlx::query(
+            "SELECT COUNT(*) FROM anomalies 
+             WHERE asset_id = ?1 AND deviations_json LIKE ?2 AND max_severity = ?3 AND detected_at > ?4",
+        )
+        .bind(asset_id)
+        .bind(format!("%\"feature_name\":\"{}\"%", feature_name))
+        .bind(severity)
+        .bind(five_minutes_ago.to_rfc3339())
+        .fetch_one(&self.pool)
+        .await;
+
+        match result {
+            Ok(row) => {
+                let count: i64 = row.get(0);
+                count > 0
+            }
+            Err(_) => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -422,4 +638,50 @@ pub struct HourlyEvents {
     pub process_events: u64,
     pub network_events: u64,
     pub total_events: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AnomalyRecord {
+    pub id: i64,
+    pub asset_id: String,
+    pub asset_type: String,
+    pub display_name: String,
+    pub severity: String,
+    pub max_severity: String,
+    pub overall_score: f64,
+    pub deviations: Vec<FeatureDeviation>,
+    pub detected_at: DateTime<Utc>,
+    pub status: AlertStatus,
+    pub acknowledged_at: Option<String>,
+    pub resolved_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum AlertStatus {
+    Open,
+    Acknowledged,
+    Resolved,
+}
+
+impl std::str::FromStr for AlertStatus {
+    type Err = String;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Open" => Ok(AlertStatus::Open),
+            "Acknowledged" => Ok(AlertStatus::Acknowledged),
+            "Resolved" => Ok(AlertStatus::Resolved),
+            _ => Err(format!("Unknown alert status: {}", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for AlertStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AlertStatus::Open => write!(f, "Open"),
+            AlertStatus::Acknowledged => write!(f, "Acknowledged"),
+            AlertStatus::Resolved => write!(f, "Resolved"),
+        }
+    }
 }

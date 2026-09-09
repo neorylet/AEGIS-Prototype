@@ -42,8 +42,9 @@ pub async fn start_monitoring(app: tauri::AppHandle, state: State<'_, AppState>)
     let ar = state.asset_registry.clone();
     let bm = state.baseline_manager.clone();
     let anom = state.anomalies.clone();
+    let app_clone3 = app.clone();
     spawn(async move {
-        run_analysis_loop(db3, ar, bm, anom).await;
+        run_analysis_loop(db3, ar, bm, anom, app_clone3).await;
     });
 
     Ok(())
@@ -92,6 +93,48 @@ pub async fn get_hourly_events_24h(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::storage::HourlyEvents>, String> {
     state.db.get_events_per_hour_24h().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_alerts(
+    state: State<'_, AppState>,
+    limit: usize,
+    offset: usize,
+    severity_filter: Option<String>,
+    status_filter: Option<String>,
+) -> Result<Vec<crate::storage::AnomalyRecord>, String> {
+    state.db.get_anomalies(limit, offset, severity_filter, status_filter).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn acknowledge_alert(
+    state: State<'_, AppState>,
+    alert_id: i64,
+) -> Result<(), String> {
+    state.db.acknowledge_anomaly(alert_id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn resolve_alert(
+    state: State<'_, AppState>,
+    alert_id: i64,
+) -> Result<(), String> {
+    state.db.resolve_anomaly(alert_id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_alert_details(
+    state: State<'_, AppState>,
+    alert_id: i64,
+) -> Result<crate::storage::AnomalyRecord, String> {
+    state.db.get_anomaly_details(alert_id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn count_open_alerts(
+    state: State<'_, AppState>,
+) -> Result<i64, String> {
+    state.db.count_open_anomalies().await.map_err(|e| e.to_string())
 }
 
 pub mod devices;

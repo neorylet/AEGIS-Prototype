@@ -82,3 +82,20 @@ export interface HourlyEvents {
   network_events: number;
   total_events: number;
 }
+
+export type AlertStatus = 'Open' | 'Acknowledged' | 'Resolved';
+
+export interface AnomalyRecord {
+  id: number;
+  asset_id: string;
+  asset_type: string;
+  display_name: string;
+  severity: string;
+  max_severity: string;
+  overall_score: number;
+  deviations: FeatureDeviation[];
+  detected_at: string;
+  status: AlertStatus;
+  acknowledged_at: string | null;
+  resolved_at: string | null;
+}

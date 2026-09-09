@@ -21,6 +21,16 @@ pub enum AssetType {
     Device,
 }
 
+impl std::fmt::Display for AssetType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AssetType::NetworkEndpoint => write!(f, "NetworkEndpoint"),
+            AssetType::Process => write!(f, "Process"),
+            AssetType::Device => write!(f, "Device"),
+        }
+    }
+}
+
 pub struct AssetRegistry {
     assets: HashMap<String, Asset>,
 }

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api';
-import { EnrichedEvent, AssetAnomaly, EventCounts, HourlyEvents } from '../types';
+import { EnrichedEvent, AssetAnomaly, EventCounts, HourlyEvents, AnomalyRecord } from '../types';
 
 const withFallback = async <T,>(fn: () => Promise<T>, fallback: T): Promise<T> => {
   try {
@@ -57,6 +57,52 @@ export const commands = {
     return withFallback<HourlyEvents[]>(
       async () => invoke('get_hourly_events_24h'),
       [],
+    );
+  },
+
+  getAlerts: async (
+    limit: number = 50,
+    offset: number = 0,
+    severityFilter?: string,
+    statusFilter?: string,
+  ): Promise<AnomalyRecord[]> => {
+    return withFallback<AnomalyRecord[]>(
+      async () =>
+        invoke('get_alerts', {
+          limit,
+          offset,
+          severityFilter,
+          statusFilter,
+        }),
+      [],
+    );
+  },
+
+  acknowledgeAlert: async (alertId: number): Promise<void> => {
+    return withFallback<void>(
+      async () => invoke('acknowledge_alert', { alertId }),
+      undefined as void,
+    );
+  },
+
+  resolveAlert: async (alertId: number): Promise<void> => {
+    return withFallback<void>(
+      async () => invoke('resolve_alert', { alertId }),
+      undefined as void,
+    );
+  },
+
+  getAlertDetails: async (alertId: number): Promise<AnomalyRecord> => {
+    return withFallback<AnomalyRecord>(
+      async () => invoke('get_alert_details', { alertId }),
+      {} as AnomalyRecord,
+    );
+  },
+
+  countOpenAlerts: async (): Promise<number> => {
+    return withFallback<number>(
+      async () => invoke('count_open_alerts'),
+      0,
     );
   },
 };

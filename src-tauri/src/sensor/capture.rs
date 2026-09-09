@@ -9,7 +9,7 @@ use crate::storage::DatabaseManager;
 use crate::discovery::AssetRegistry;
 use crate::fingerprint::{BaselineManager, FeatureExtractor};
 use crate::risk::{AssetAnomaly, run_detection_pipeline, format_anomaly_summary};
-use log::{info, error, warn, debug};
+use log::{info, error, warn};
 use tauri::{AppHandle, Manager};
 
 /// Helper: Safely parses IP and port from "127.0.0.1:8080", "[::1]:443", or "*:*"
@@ -225,6 +225,7 @@ pub async fn run_analysis_loop(
     asset_registry: Arc<Mutex<AssetRegistry>>,
     baseline_manager: Arc<Mutex<BaselineManager>>,
     anomalies_cache: Arc<Mutex<Vec<AssetAnomaly>>>,
+    app: tauri::AppHandle,
 ) {
     let extractor = FeatureExtractor::new();
     let analysis_interval_secs: i64 = 15;
@@ -335,6 +336,30 @@ pub async fn run_analysis_loop(
 
         if !new_anomalies.is_empty() {
             info!("  ⚠️  {} anomaly/anomalies detected:", new_anomalies.len());
+            
+            for anomaly in &new_anomalies {
+                // Check cooldown for each deviation in the anomaly
+                let mut should_insert = false;
+                for deviation in &anomaly.deviations {
+                    if !db.check_cooldown(&anomaly.asset_id, &deviation.feature_name, &deviation.severity.to_string()).await {
+                        should_insert = true;
+                        break;
+                    }
+                }
+                
+                if should_insert {
+                    match db.insert_anomaly(anomaly).await {
+                        Ok(id) => {
+                            info!("    Persisted anomaly {} for asset '{}'", id, anomaly.asset_id);
+                            let _ = app.emit_all("new-anomaly", anomaly);
+                        }
+                        Err(e) => {
+                            error!("Failed to insert anomaly for asset '{}': {}", anomaly.asset_id, e);
+                        }
+                    }
+                }
+            }
+            
             for a in new_anomalies.iter().take(5) {
                 info!("    {}", format_anomaly_summary(a));
             }

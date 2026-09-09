@@ -95,6 +95,11 @@ pub fn run() {
             commands::get_asset_count,
             commands::get_event_counts,
             commands::get_hourly_events_24h,
+            commands::get_alerts,
+            commands::acknowledge_alert,
+            commands::resolve_alert,
+            commands::get_alert_details,
+            commands::count_open_alerts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

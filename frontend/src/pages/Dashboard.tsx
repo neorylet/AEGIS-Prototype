@@ -74,7 +74,6 @@ const formatSourceLabel = (source: string): string =>
 
 export const Dashboard = () => {
   const [isMonitoring, setIsMonitoring] = useState<boolean>(false);
-  const [listenerActive, setListenerActive] = useState<boolean>(false);
   const [rawEvents, setRawEvents] = useState<EnrichedEvent[]>([]);
   const [anomalies, setAnomalies] = useState<AssetAnomaly[]>([]);
   const [eventCounts, setEventCounts] = useState<EventCounts | null>(null);
@@ -249,7 +248,6 @@ export const Dashboard = () => {
           } else {
             unlistenBatch = unsub;
             console.log('[DEBUG] new-events-batch listener attached');
-            setListenerActive(true);
           }
         })
         .catch((err) => console.error('Failed to attach new-events-batch listener:', err));
@@ -268,7 +266,6 @@ export const Dashboard = () => {
           } else {
             unlistenSingle = unsub;
             console.log('[DEBUG] Listener attached');
-            setListenerActive(true);
           }
         })
         .catch((err) => console.error('Failed to attach new-event listener:', err));
@@ -280,7 +277,6 @@ export const Dashboard = () => {
     return () => {
       isMounted = false;
       console.log('[DEBUG] Listener cleaned up');
-      setListenerActive(false);
       if (unlistenBatch) unlistenBatch();
       if (unlistenSingle) unlistenSingle();
       if (intervalStats) clearInterval(intervalStats);
