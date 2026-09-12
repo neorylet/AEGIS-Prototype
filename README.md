@@ -1,419 +1,179 @@
-# AEGIS
+# AEGIS-Prototype
 
-## Active Defense & Granular Intelligence System
+## The prototype that proved the stack
 
-AEGIS is a **desktop cybersecurity application** designed to collect, analyze, correlate, and contextualize network and security observations.
-
-Its purpose is to transform raw security telemetry into **granular, evidence-driven security intelligence** that can support detection, investigation, risk assessment, incident analysis, and controlled defensive action.
-
-AEGIS is built around the principle:
-
-> **Collect → Understand → Correlate → Assess → Explain → Defend**
-
-AEGIS is currently under active development. Some components are conceptual or skeletal and should not be interpreted as fully implemented capabilities.
-
----
-
-## System Overview
-
-AEGIS is designed as a modular desktop security platform centered around an evidence-driven analytical pipeline.
-
-At a high level:
-
-```text
-Network / Security Telemetry
-            ↓
-       Collection
-            ↓
-    Event Normalization
-            ↓
-   Entity / Asset Context
-            ↓
-   Behavioral Analysis
-            ↓
-        Detection
-            ↓
-       Correlation
-            ↓
-    Risk Assessment
-            ↓
- Security Finding / Incident
-            ↓
-       Explanation
-            ↓
- Policy / Authorization
-            ↓
-   Controlled Response
-```
-
-Threat intelligence may be used to enrich observations and provide additional context throughout the analytical process.
-
-Machine learning may also be used where it provides a justified analytical benefit. ML is **not a requirement for the definition of AEGIS** and is not assumed to be the primary detection mechanism.
+> ⚠️ **This repository is a prototype.**
+>
+> It is **not** the production AEGIS system. It is a working proof of the
+> Rust + Tauri + SQLite stack and the endpoint telemetry pipeline.
+>
+> The real AEGIS — designed from a written specification, with a proper
+> detection engine, alert lifecycle, and multi-agent architecture — will
+> live in a separate repository.
+>
+> **Journey:** Icaros (packet capture) → **AEGIS-Prototype** (this repo) → AEGIS (planned).
 
 ---
 
-## Core Capabilities
+## What Is This?
 
-The following represent the intended capability areas of AEGIS. Implementation status may vary by component.
+AEGIS-Prototype is a desktop endpoint security monitoring tool built with:
+- **Backend:** Rust + Tauri v1
+- **Frontend:** React + TypeScript + Tailwind CSS
+- **Storage:** SQLite (local)
 
-* **Network & Security Telemetry Collection**
-  Collect relevant network or security observations from approved sources.
+It collects process and network telemetry from a Windows machine, builds
+statistical baselines of "normal" behavior, and flags deviations as
+anomalies — all inside a dark/light themed desktop application.
 
-* **Event Normalization**
-  Convert heterogeneous observations into a consistent internal event representation.
-
-* **Entity & Asset Context**
-  Maintain contextual information about devices, hosts, addresses, services, and other observed entities.
-
-* **Behavioral Analysis**
-  Establish behavioral baselines and identify meaningful deviations from expected activity.
-
-* **Multi-Modal Detection**
-  Support multiple detection approaches, potentially including deterministic rules, signatures, heuristics, statistical analysis, behavioral analysis, anomaly detection, and ML-assisted techniques.
-
-* **Threat Intelligence Enrichment**
-  Enrich observations with relevant external or internally maintained intelligence when appropriate.
-
-* **Event Correlation**
-  Identify relationships between observations using factors such as time, entities, indicators, behavior, and potential attack sequences.
-
-* **Contextual Risk Assessment**
-  Assess the significance of accumulated evidence using contextual factors rather than treating detection severity as equivalent to overall risk.
-
-* **Incident Construction & Management**
-  Organize related evidence, detections, entities, timelines, and analyst information into security incidents.
-
-* **Explainable Findings**
-  Provide analysts with the evidence and reasoning behind detections, correlations, and risk assessments.
-
-* **Threat Hunting**
-  Support analyst-driven investigation of telemetry, entities, detections, and historical activity.
-
-* **Controlled Defensive Response**
-  Provide a framework for authorized response actions subject to policy, authorization, safety controls, auditing, and verification.
-
-These capabilities are being developed incrementally and are **not all currently implemented**.
+It was built iteratively over several weeks to validate the concept
+before committing to a full product design.
 
 ---
 
-## Architecture
+## What Works
 
-AEGIS is currently designed as a **desktop Tauri application**.
+### Telemetry Collection
+- **`poll_processes()`** – collects running processes every 5 seconds via `sysinfo`
+- **`poll_connections()`** – collects TCP/UDP connections every 5 seconds via `netstat -an`
+- **Deduplication** – HashSet-based tracking prevents unbounded database growth
+- **Real-time streaming** – new events push to the UI via Tauri `emit_all`
+
+### Baseline Engine
+- **Welford's online algorithm** for streaming mean/stddev computation
+- **8 features per asset:** event_count, connection_rate, unique_destinations, unique_ports, process_cpu_avg, process_cpu_max, process_mem_avg, process_mem_max
+- **Baseline persistence** to SQLite – survives restarts
+- **z-score + IQR hybrid scoring** with severity bucketing (Low / Medium / High / Critical)
+- **Confidence scoring** based on sample count
+
+### Alert Management
+- **Anomaly persistence** to SQLite
+- **Alert lifecycle:** Open → Acknowledged → Resolved
+- **Cooldown logic** to reduce duplicate alerts
+- **Bulk acknowledge/resolve** actions
 
 ### Frontend
-
-* React
-* TypeScript
-* Desktop user interface delivered through Tauri
-
-### Native / Backend Layer
-
-* Rust
-* Tauri
-* Security telemetry processing
-* Event processing
-* Detection and analytical components
-* Application services and system integration
-
-### Storage
-
-Local persistence is currently being evaluated and developed according to AEGIS requirements.
-
-SQLite may be used for local deployments where appropriate. Production storage architecture remains subject to architectural decisions.
-
-### Machine Learning
-
-Python may be used for specific ML or analytical components where justified.
-
-ML is an **optional analytical mechanism**, not the foundation of the entire AEGIS architecture.
+- **Dashboard** with KPIs, 24-hour telemetry chart, and live event table
+- **Alerts page** with severity filters, expandable rows, and deviation details
+- **Dark / light theme** with CSS variables
+- **Real-time updates** via Tauri event listener
 
 ---
 
-## Architectural Principles
+## What Doesn't Work (And Why We Paused)
 
-AEGIS follows several core principles:
+Iterative development surfaced **fundamental design gaps** that cannot be
+solved by patching. Development is paused to plan the real system.
 
-### Evidence Over Assumptions
+### Known Issues in This Prototype
 
-Individual observations should not automatically be treated as confirmed security incidents.
+| Area | Issue |
+| :--- | :--- |
+| **Baseline math** | σ=0 edge case produces fake z-scores (division-by-zero clamp) |
+| **Detection philosophy** | No coherent threat model – features were chosen ad-hoc |
+| **Alert volume** | No signal-to-noise strategy – hundreds of false positives at scale |
+| **Alert lifecycle** | Deduplication is inconsistent; no FP feedback loop; no severity decay |
+| **Multi-agent** | Undefined protocol, no trust model, no offline caching design |
+| **Frontend** | Symptoms of a confused data model (no grouping, no sorting, 50-item limit) |
 
-AEGIS should build findings from observable evidence and supporting context.
+### The Real Problem
 
-### Detection ≠ Incident
-
-A detection represents suspicious or potentially significant activity.
-
-An incident represents a broader security situation requiring investigation, tracking, or response.
-
-Not every detection should automatically become an incident.
-
-### Detection ≠ Risk
-
-Detection severity is not equivalent to overall risk.
-
-Risk should consider contextual factors such as:
-
-* Detection severity
-* Detection confidence
-* Behavioral deviation
-* Threat intelligence
-* Entity or asset criticality
-* Related observations
-* Temporal relationships
-* Accumulated evidence
-
-### Correlation ≠ Detection
-
-Detection asks:
-
-> **"Is this observation or behavior suspicious?"**
-
-Correlation asks:
-
-> **"Are these observations related to the same security activity?"**
-
-Risk assessment then considers the accumulated evidence.
-
-### ML ≠ Ground Truth
-
-Machine learning output, where used, should be treated as an analytical signal or evidence source rather than unquestionable truth.
+AEGIS-Prototype proved that **the stack works**. It did not prove that the
+**design works**. Those are different problems. The second one requires a
+specification, not iteration.
 
 ---
 
-## Current Development Status
+## Why the Pause
 
-AEGIS is currently in active architectural and implementation development.
+This is not a failure. It's a deliberate engineering decision.
 
-Some major subsystem structures may exist as skeletons or placeholders while their final implementation is being designed.
+Real security tools are not built by patching – they're built from a
+specification. The prototype proved what needed to be proved:
 
-Current development priorities include:
+- Rust + Tauri + SQLite can power an endpoint security tool
+- A React + Tailwind frontend can render telemetry cleanly
+- Welford online statistics work for lightweight baselines
+- Real-time streaming from Rust to React is viable
 
-* Establishing the telemetry collection architecture
-* Defining the event model
-* Developing the detection pipeline
-* Designing behavioral analysis
-* Establishing correlation mechanisms
-* Defining contextual risk assessment
-* Developing incident management
-* Establishing explainability mechanisms
-* Determining appropriate threat intelligence integrations
-* Defining controlled response capabilities
-* Establishing testing and evaluation methodology
+What it did not prove – and what the next system will address:
 
-Refer to the canonical specification and project documentation for the authoritative implementation status of individual components.
-
----
-
-## Project Structure
-
-The repository is organized around modular AEGIS subsystems.
-
-```text
-AEGIS/
-├── src-tauri/
-│   └── src/
-│       ├── sensor/
-│       ├── discovery/
-│       ├── events/
-│       ├── detection/
-│       ├── fingerprint/
-│       ├── intelligence/
-│       ├── correlation/
-│       ├── incidents/
-│       ├── risk/
-│       ├── explanation/
-│       ├── policy/
-│       ├── response/
-│       ├── playbooks/
-│       ├── ml/
-│       ├── forecasting/
-│       ├── hunting/
-│       ├── integrations/
-│       ├── storage/
-│       ├── config/
-│       └── commands/
-│
-├── frontend/
-│
-├── docs/
-│   ├── architecture/
-│   ├── design/
-│   ├── development/
-│   ├── research/
-│   ├── security/
-│   └── decisions/
-│
-├── README.md
-├── CONTRIBUTING.md
-└── LICENSE
-```
-
-**Note:** The presence of a directory does not necessarily indicate that the corresponding subsystem is fully implemented.
-
-The actual repository structure is authoritative for implementation.
+- What AEGIS actually detects (threat model)
+- How alerts flow from anomaly → alert → incident
+- How multiple agents report to a central console
+- How the system behaves at scale
+- How false positives are minimized
+- How the analyst actually triages alerts
 
 ---
 
-## Development
+## The Road Ahead
 
-### Prerequisites
+The next repository (`AEGIS`) will be built from a written spec, in phases:
 
-The exact development requirements should follow the versions specified by the current project configuration.
+1. **Week 1 – Planning.** Scope, architecture, detection spec, alert lifecycle, paper wireframes.
+2. **Phase 0 – Foundation.** Console + agent skeleton, no detection yet.
+3. **Phase 1 – Telemetry.** Multi-agent collection with a central console.
+4. **Phase 2 – Detection.** Designed detection engine, tested against real threats.
+5. **Phase 3 – Response.** Alert lifecycle, incident grouping, triage workflow.
 
-At minimum, AEGIS currently uses technologies from the following ecosystem:
+**The first commit of the new AEGIS repo will be a specification, not code.**
 
-* Rust
-* Tauri
-* Node.js
-* npm
-* React
-* TypeScript
+---
 
-Python is only required where the current implementation includes Python-based analytical or ML components.
+## Historical Context
 
-Do not assume a specific version unless it is established by the repository configuration.
+This project has gone through multiple iterations:
 
-### Getting Started
+| Iteration | What It Was | What It Taught |
+| :--- | :--- | :--- |
+| **Icaros** | Packet capture experiments | Flow-based thinking; WebSocket memory limits; frontend shouldn't process raw telemetry |
+| **AEGIS-Prototype** (this repo) | Endpoint telemetry + baseline engine | The stack works; the design must come first |
+| **AEGIS** (planned) | Spec-driven endpoint security monitoring | TBD – this is the real product |
 
-Follow the project-specific development documentation for the current setup and build process.
+Each iteration teaches. Each pause sharpens the goal.
 
-```text
-docs/development/setup.md
-```
+---
 
-The development setup should be kept synchronized with the actual repository and dependency configuration.
+## Repository Status
+
+- **Status:** Frozen as reference implementation
+- **Purpose:** Historical record of the prototype phase
+- **Next repo:** `github.com/neorylet/AEGIS` (will be created after the planning week)
+- **Licensing:** See `LICENSE`
 
 ---
 
 ## Documentation
 
-The `docs/` directory contains the project's technical, architectural, research, and development documentation.
+The `docs/` directory contains design notes, architecture decisions, and
+research from the prototype phase. It is preserved for reference.
 
-Important documentation includes:
+Key documents:
+- `docs/AEGIS_CANONICAL_SPECIFICATION.md` – the original (prototype-scope) spec
+- `docs/IMPLEMENTATION_STATUS.md` – what was actually implemented
+- `docs/AUDIT_REPORT.md` – the prototype audit
 
-* **Canonical Specification** — authoritative definition of AEGIS scope and intent
-* **Architecture Documentation** — system architecture and component relationships
-* **Design Documentation** — detailed subsystem and data-flow design
-* **Research Documentation** — research supporting AEGIS design decisions
-* **Security Documentation** — security architecture, threats, and controls
-* **Development Documentation** — development environment and implementation guidance
-* **Architecture Decision Records (ADRs)** — significant architectural decisions and their rationale
-
-Documentation must distinguish between:
-
-```text
-Implemented
-Partially Implemented
-Skeleton / Placeholder
-Planned
-Experimental
-Research
-TBD
-Future
-Out of Scope
-Unverified
-```
-
-Documentation must not present planned or conceptual functionality as implemented functionality.
-
----
-
-## Research & Academic Foundation
-
-AEGIS development is supported by research into areas relevant to its architecture and security objectives.
-
-Research may include topics such as:
-
-* Intrusion detection
-* Network security monitoring
-* Behavioral analysis
-* Anomaly detection
-* Event correlation
-* Threat intelligence
-* Network forensics
-* Risk assessment
-* Explainable security analytics
-* Security automation
-
-Research topics are retained based on their relevance to actual AEGIS requirements and architectural decisions.
-
-Technologies or methodologies appearing in research should **not** automatically be interpreted as AEGIS features.
-
-Research citations should be verified before being used as formal academic references.
-
----
-
-## Scope Boundaries
-
-AEGIS is **not currently defined as**:
-
-* A generic SIEM replacement
-* An EDR/XDR platform
-* A cloud-native platform
-* A Kubernetes system
-* A distributed enterprise platform
-* An AI-first cybersecurity system
-* A universal threat-intelligence aggregator
-* A compliance-management platform
-
-Endpoint-level actions such as arbitrary process termination, file quarantine, or operating-system manipulation are not assumed unless an explicit endpoint architecture and corresponding requirements are established.
-
----
-
-## Roadmap
-
-The AEGIS roadmap is intentionally requirements-driven.
-
-Future development may include:
-
-* Expanded telemetry collection
-* More advanced behavioral analysis
-* Additional detection mechanisms
-* Improved correlation
-* Threat intelligence integrations
-* Advanced investigation and hunting
-* Controlled response automation
-* Additional analytical and ML capabilities
-* Improved visualization and explainability
-
-Specific roadmap items should only become committed requirements after they are evaluated and documented.
+**Note:** These documents describe the prototype's ambitions, not the
+final AEGIS design. The real spec will be written from scratch in the
+next repository.
 
 ---
 
 ## Contributing
 
-Contributions should remain consistent with the AEGIS canonical specification, architecture, requirements, and security boundaries.
+This repository is **not accepting contributions**. It is archived in
+spirit and preserved for reference.
 
-Before introducing a substantial architectural or functional change, consult the relevant documentation and Architecture Decision Records.
-
-See:
-
-```text
-CONTRIBUTING.md
-```
-
-for contribution guidelines.
+If you're interested in the real AEGIS project, watch the future repo.
 
 ---
 
-## License
+## A Note on Honesty
 
-See the `LICENSE` file for the project's current licensing terms.
+This README does not claim AEGIS-Prototype is a finished product. It
+is not. It is a working prototype that validated a stack and taught
+its builder a hard lesson: **you cannot patch your way to good
+detection. You have to design it.**
 
----
-
-## Security
-
-Security-related issues and vulnerabilities should be handled according to the project's documented security disclosure process.
-
-Do not assume that a dedicated security email address, vulnerability-management process, or disclosure infrastructure exists unless it has been explicitly configured for the project.
-
----
-
-## Project Status
-
-**AEGIS — Active Defense & Granular Intelligence System**
-
-**Status:** Active Development
-
-The architecture and implementation are evolving. The **AEGIS Canonical Specification** is the authoritative source for system intent, while the repository itself is authoritative for current implementation status.
+The next system will be built differently. That's the point.
